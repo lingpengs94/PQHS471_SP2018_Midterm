@@ -1,0 +1,479 @@
+---
+title: "PQHS471_ Midterm"
+author: "Andrew Shan"
+date: "3/8/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache=FALSE,
+               prompt=FALSE,
+               tidy=FALSE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE)
+```
+
+```{r}
+library(knitr)
+library(rmdformats)
+library(arm)
+library(leaps)
+library(tableone)
+library(pander)
+library(MASS)
+library(ROCR)
+library(skimr)
+library(rms)
+library(broom)
+library(dplyr)
+library(tidyverse)
+```
+
+#  Load and Tidy the Data
+```{r}
+test <- read.csv("census_test.csv")
+train <- read.csv("census_train.csv")
+```
+
+
+```{r}
+skim(train)
+```
+```{r}
+skim(test)
+```
+
+```{r}
+names(train)
+dim(train)
+```
+
+
+There are 250000 subjects in the `train` data set and 15 variables for each subjects.There are none missing values for any one of the variables. 
+
+
+
+# Check categorical variables 
+
+```{r}
+levels(train$native.country)
+library(rockchalk)
+train$native.country <- combineLevels(train$native.country,levs = c(" ?"," Cambodia"," Canada"," China"," Columbia"," Cuba",                       " Dominican-Republic"," Ecuador"," El-Salvador"," England"," France"," Germany" ," Greece"," Guatemala" , " Haiti",                      " Holand-Netherlands" ," Honduras"," Hong"," Hungary"," India"," Iran"," Ireland"," Italy" , " Jamaica" ," Japan",                      " Laos"," Mexico"," Nicaragua"," Outlying-US(Guam-USVI-etc)"," Peru"," Philippines"," Poland" ," Portugal" ,
+                                                                    " Puerto-Rico"," Scotland"," South"," Taiwan" , " Thailand",
+                                                                    " Trinadad&Tobago"," Vietnam", " Yugoslavia"),
+                                      newLabel = c("Non-US") )
+```
+
+```{r}
+levels(train$education)
+```
+
+```{r}
+train$education <- combineLevels(train$education,levs = c(" 10th"," 11th"," 12th"," 1st-4th"," 5th-6th"," 7th-8th"," 9th"," Preschool",
+                                                          " HS-grad"),newLabel = c("High School and below") )
+train$education <- combineLevels(train$education,levs = c(" Assoc-acdm"," Assoc-voc"," Some-college" ),newLabel = c("some college") )
+train$education <- combineLevels(train$education,levs = c(" Bachelors"," Doctorate"," Masters"," Prof-school"),newLabel = c("Bachelors and above") )
+```
+
+```{r}
+train$income <- combineLevels(train$income,levs = c(" <=50K"),newLabel = c("0") )
+train$income <- combineLevels(train$income,levs = c(" >50K"),newLabel = c("1") )
+```
+
+First, we want to check if it is necessary for some of the categorical variables to combine some levels together. We combine the variable `native.country` to two category `United States` and `Non-US`.  Also, we combine 16 levels in the variable `education` into 3 categories `High School and below`, `some college`, and `Bachelors and above`. In order to build our logistic model, we re code levels of  `income` into **0** and **1** where **0** stands for income less than or equal to 50K and **1** stands for income more than 50K.
+
+# Quantative variables 
+```{r}
+p1<- ggplot(train, aes(x = age)) + geom_histogram(aes(y = ..density..),bins=25, color = "black", fill = "grey") +
+  stat_function(fun = dnorm,args = list(mean = mean(train$age), sd = sd(train$age)),
+                lwd = 1.5, col = "black") +
+  theme_bw()+labs(title = "Distribution of age")
+
+p2<- ggplot(train, aes(x =  capital.gain)) + geom_histogram(aes(y = ..density..),bins=25, color = "black", fill = "grey") +
+  stat_function(fun = dnorm,args = list(mean = mean(train$capital.gain), sd = sd(train$ capital.gain)),
+                lwd = 1.5, col = "black") +
+  theme_bw()+labs(title = "Distribution of capital gain")
+p3<- ggplot(train, aes(x =  capital.loss)) + geom_histogram(aes(y = ..density..),bins=25, color = "black", fill = "grey") +
+  stat_function(fun = dnorm,args = list(mean = mean(train$capital.loss), sd = sd(train$capital.loss)),
+                lwd = 1.5, col = "black") +
+  theme_bw()+labs(title = "Distribution of capital loss")
+p4<- ggplot(train, aes(x =  hours.per.week)) + geom_histogram(aes(y = ..density..),bins=25, color = "black", fill = "grey") +
+  stat_function(fun = dnorm,args = list(mean = mean(train$ hours.per.week), sd = sd(train$ hours.per.week)),
+                lwd = 1.5, col = "black") +
+  theme_bw()+labs(title = "Distribution of working hours per week ")
+p5<- ggplot(train, aes(x = education.num)) + geom_histogram(aes(y = ..density..),bins=25, color = "black", fill = "grey") +
+  stat_function(fun = dnorm,args = list(mean = mean(train$education.num), sd = sd(train$education.num)),
+                lwd = 1.5, col = "black") +
+  theme_bw()+labs(title = "Distribution of number of education years ")
+
+gridExtra::grid.arrange(p1, p2, p3, p4,p5, nrow = 2)
+```
+
+The histograms show that the quantitative variables are normally distributed except the captial gain and loss, which includes a lot of value 0. We may consider spend more degree of freedom for these two variables latter in the model fitting process. 
+
+# Test dataset
+
+We did the same treatment to test dataset as to train dataset. 
+
+
+```{r}
+test$education <- combineLevels(test$education,levs = c(" 10th"," 11th"," 12th"," 1st-4th"," 5th-6th"," 7th-8th"," 9th"," Preschool",
+                                                          " HS-grad"),newLabel = c("High School and below") )
+test$education <- combineLevels(test$education,levs = c(" Assoc-acdm"," Assoc-voc"," Some-college" ),newLabel = c("some college") )
+test$education <- combineLevels(test$education,levs = c(" Bachelors"," Doctorate"," Masters"," Prof-school"),newLabel = c("Bachelors and above") )
+test$income <- combineLevels(test$income,levs = c(" <=50K"),newLabel = c("0") )
+test$income <- combineLevels(test$income,levs = c(" >50K"),newLabel = c("1") )
+```
+```{r}
+test$native.country <- combineLevels(test$native.country,levs = c(" ?"," Cambodia"," Canada"," China"," Columbia",
+                                                                    " Cuba"," Dominican-Republic"," Ecuador"," El-Salvador",
+                                                                    " England" ," France"," Germany"," Greece", " Guatemala",
+                                                                    " Haiti"," Honduras"," Hong"," Hungary"," India",
+                                                                    " Iran"," Ireland"," Italy"," Jamaica"," Japan",
+                                                                    " Laos" ," Mexico"," Nicaragua", " Outlying-US(Guam-USVI-etc)",
+                                                                    " Peru"," Philippines"," Poland"," Portugal",
+                                                                    " Puerto-Rico"," Scotland"," South"," Taiwan",
+                                                                    " Thailand"," Trinadad&Tobago"," Vietnam",
+                                                                    " Yugoslavia"),
+                                      newLabel = c("Non-US") )
+```
+
+# Codebook 
+
+```{r}
+a <- dput(names(train))
+```
+
+```{r}
+options(width = 200)
+b <- c("age at baseline",
+       "Working class",
+       "The final sample weight",
+       "Education level",
+       "Number of years spent on education",
+       "Marriage status",
+       "Ocupation",
+       "Role in family",
+       "Race",
+       "Sex",
+       "Capital gain in a year",
+       "Capital loss in a year",
+       "hours spent on work per week",
+       "Country born in",
+       "Total income")
+c <- map(train, function(x) class(x))
+d <- map(train, function(x) sum(is.na(x)))
+e <- map(train, function(x) ifelse(is.factor(x) == T, "--", min(x, na.rm=T)))
+f <- map(train, function(x) ifelse(is.factor(x) == T, "--", max(x, na.rm=T)))
+
+train.CB <- data_frame(Variable = a, Description = b, Class = c, Missing = d, Min = e, Max = f)
+pander(train.CB)
+```
+
+```{r}
+rm(a, b, c, d, e)
+```
+
+# Losgitc model 
+```{r}
+names(train)
+```
+
+We’ll start with a model motivated by the Spearman ρ2 plot developed above, and repeated below.
+```{r}
+plot(spearman2(income ~ age+workclass+education+education.num+marital.status+occupation+relationship+race+sex
+               +capital.gain+capital.loss+hours.per.week+native.country,
+               data = train))
+```
+
+First, we try to use best subsets to select predcitors.
+
+# Running “Best Subsets” to select predictors
+
+```{r}
+preds <- with(train, cbind(age,workclass,education,education.num,marital.status,occupation,relationship,race,sex,
+                            capital.gain,capital.loss,hours.per.week,native.country))
+x1 <- regsubsets(preds, train$income, nvmax=13)
+rs.sum <- summary(x1)
+rs.sum
+```
+```{r}
+rs.sum$adjr2<-round(rs.sum$adjr2, 4)
+rs.sum$cp<-round(rs.sum$cp, 1)
+rs.sum$bic<-round(rs.sum$bic, 1)
+rs.sum$aic.corr <- 25000*log(rs.sum$rss / 25000) + 2*(2:14) +
+               (2 * (2:14) * ((2:14)+1) / (25000 - (2:14) - 1))
+rs.sum$aic.corr<-round(rs.sum$aic.corr,1)
+```
+
+
+```{r}
+best_mods_1 <- data_frame( k = 2:14,
+                           r2 = rs.sum$rsq, adjr2 = rs.sum$adjr2, cp = rs.sum$cp, aic.c = rs.sum$aic.c, bic = rs.sum$bic)
+rs.sum <- cbind(best_mods_1, rs.sum$which)
+```
+
+```{r}
+p1<- ggplot(rs.sum, aes(x = k, y = adjr2,label = round(adjr2,2))) +
+  geom_line() +
+  geom_label() +
+  geom_label(data = subset(rs.sum,adjr2 == max(adjr2)),aes(x = k, y = adjr2, label = round(adjr2,2)),
+             fill = "yellow", col = "blue") + theme_bw() +
+  scale_x_continuous(breaks = 2:14) +
+  labs(x = "# of predictors (including intercept)",y = "Adjusted R-squared")
+
+p2<- ggplot(rs.sum, aes(x = k, y = cp,
+                   label = round(cp,1))) +
+  geom_line() +geom_label() +geom_abline(intercept = 0, slope = 1,col = "red") + theme_bw() +
+  scale_x_continuous(breaks = 2:14) +
+  labs(x = "# of predictors (including intercept)",y = "Mallows' Cp")
+
+p3<- ggplot(rs.sum, aes(x = k, y = aic.c,label = round(aic.c,1))) +geom_line() +
+  geom_label() +geom_label(data = subset(rs.sum, aic.c == min(aic.c)),aes(x = k, y = aic.c), fill = "pink",
+                           col = "red") + theme_bw() +
+  scale_x_continuous(breaks = 2:14) +labs(x = "# of predictors (including intercept)",y = "Bias-Corrected AIC")
+
+p4<- ggplot(rs.sum, aes(x = k, y = bic,label = round(bic,1))) +
+  geom_line() +
+  geom_label() +
+  geom_label(data = subset(rs.sum, bic == min(bic)),aes(x = k, y = bic),fill = "lightgreen", col = "blue") + theme_bw() +
+  scale_x_continuous(breaks = 2:14) +
+  labs(x = "# of predictors (including intercept)",y = "BIC")
+gridExtra::grid.arrange(p1, p2, p3, p4, nrow = 2)
+```
+
+# Candidate Models from Best Subsets
+
+The models we'll consider are:
+
+Inputs | Predictors Included | Reason
+-----: | --------------------------- | ---------------
+10 | `age` `education` `education.num` `marital.status` `relationship` `race` `sex` `capital.gain` `capital.loss` `hours.per.week`| lowest BIC
+9 | `age` `education` `education.num` `marital.status` `relationship` `sex` `capital.gain` `capital.loss` `hours.per.week` | suggested by C~p~
+12 | `age` `education` `education.num` `marital.status` `relationship` `race` `sex` `capital.gain` `capital.loss` `hours.per.week` `workclass` `occupation` | lowest AIC (corr.)
+12 | `age` `education` `education.num` `marital.status` `relationship` `race` `sex` `capital.gain` `capital.loss` `hours.per.week` `workclass` `occupation` | highest adj. R^2^
+
+```{r}
+glm9 <- glm(income~age+education+education.num+marital.status+relationship+sex+capital.gain+capital.loss+hours.per.week,data = train,family = binomial)
+glm10 <- glm(income~age+education+education.num+marital.status+relationship+sex+capital.gain+capital.loss+hours.per.week+race,data = train,family = binomial)
+glm12 <- glm(income~age+education+education.num+marital.status+relationship+sex+capital.gain+capital.loss+hours.per.week+occupation
+             +race+workclass,data = train,family = binomial)
+glm0<-glm(income~1, data = train, family = binomial)
+```
+```{r}
+anova(glm12,glm10,glm9,glm0)
+```
+```{r}
+pchisq( 21.824, 4, lower.tail = FALSE)
+pchisq( 145.728, 22, lower.tail = FALSE)
+pchisq( 11162.3, 19, lower.tail = FALSE)
+```
+
+The anoav result suggest that the model including all the variables except `native.country` is the best fitted model. 
+## ROC for the best model in best subset method
+```{r}
+prob <- predict(glm12, data = train, type="response")
+pred <- prediction(prob, train$income)
+# rest of this doesn't need much adjustment except for titles
+perf <- performance(pred, measure = "tpr", x.measure = "fpr")
+auc <- performance(pred, measure="auc")
+auc <- round(auc@y.values[[1]],3)
+roc.data <- data.frame(fpr=unlist(perf@x.values),
+                       tpr=unlist(perf@y.values),
+                       model="GLM")
+ggplot(roc.data, aes(x=fpr, ymin=0, ymax=tpr)) +
+    geom_ribbon(alpha=0.2) +
+    geom_line(aes(y=tpr)) +
+    labs(title = paste0("ROC Curve w/ AUC=", auc),
+         subtitle = "GLM model for training data")
+```
+
+Based on the C statistic (AUC = 0.909) this would rank somewhere near the high end of a pretty good predictive model by the ROC curve standard.
+
+
+# Check the Predictability of best subset model
+
+```{r}
+glm.probs = predict(glm12, test, type ="response")
+glm.pred = rep(0, length(glm.probs))
+glm.pred[glm.probs >0.5] <- 1
+table(glm.pred, test$income)
+```
+```{r}
+mean(glm.pred!= test$income)
+```
+
+For the best subset model, the test error rate is 15.59%, which is pretty good.
+
+# Forward and Backward Stepwise Selection
+
+## Forward selection 
+
+```{r}
+with(train, 
+     step(glm(income ~ 1,family = binomial),
+          scope=(~ age+workclass+education+education.num+marital.status
+                 +occupation+relationship+race+sex+capital.gain+
+                   capital.loss+hours.per.week+native.country),
+     direction="forward"))
+```
+
+Forward selection includes 11 variables including `relationship`,`education.num`,`capital.gain`,occupation`,`capital.loss`,`hours.per.week`,`age`,`sex`,`marital.status`,`workclass`and `native.country`.
+
+```{r}
+fwd <- glm(formula = income ~ relationship + education.num + capital.gain + 
+    occupation + capital.loss + hours.per.week + age + sex + 
+    marital.status + workclass + native.country, family = binomial,data = train)
+```
+
+## ROC for forward selection model
+```{r}
+prob <- predict(fwd, data = train, type="response")
+pred <- prediction(prob, train$income)
+# rest of this doesn't need much adjustment except for titles
+perf <- performance(pred, measure = "tpr", x.measure = "fpr")
+auc <- performance(pred, measure="auc")
+auc <- round(auc@y.values[[1]],3)
+roc.data <- data.frame(fpr=unlist(perf@x.values),
+                       tpr=unlist(perf@y.values),
+                       model="GLM")
+ggplot(roc.data, aes(x=fpr, ymin=0, ymax=tpr)) +
+    geom_ribbon(alpha=0.2) +
+    geom_line(aes(y=tpr)) +
+    labs(title = paste0("ROC Curve w/ AUC=", auc),
+         subtitle = "GLM model for training data")
+```
+
+## Check Predictability
+```{r}
+fwd.probs = predict(fwd, test, type ="response")
+fwd.pred = rep(0, length(fwd.probs))
+fwd.pred[fwd.probs >0.5] <- 1
+table(fwd.pred, test$income)
+```
+```{r}
+mean(fwd.pred!= test$income)
+```
+For the model selected by forward selection method, the test error rate is 15.83%, which is pretty good.
+
+
+## Backward selection 
+
+```{r}
+with(train, 
+     step(glm(income ~ age+workclass+education+education.num+marital.status
+                 +occupation+relationship+race+sex+capital.gain+
+                   capital.loss+hours.per.week+native.country,family = binomial),
+         direction="backward"))
+```
+
+```{r}
+bwd<- glm(formula = income ~ age + workclass + education.num + marital.status + 
+    occupation + relationship + race + sex + capital.gain + capital.loss + 
+    hours.per.week + native.country, family = binomial(link = logit),data = train)
+
+```
+
+```{r}
+prob <- predict(bwd, data = train, type="response")
+pred <- prediction(prob, train$income)
+# rest of this doesn't need much adjustment except for titles
+perf <- performance(pred, measure = "tpr", x.measure = "fpr")
+auc <- performance(pred, measure="auc")
+auc <- round(auc@y.values[[1]],3)
+roc.data <- data.frame(fpr=unlist(perf@x.values),
+                       tpr=unlist(perf@y.values),
+                       model="GLM")
+ggplot(roc.data, aes(x=fpr, ymin=0, ymax=tpr)) +
+    geom_ribbon(alpha=0.2) +
+    geom_line(aes(y=tpr)) +
+    labs(title = paste0("ROC Curve w/ AUC=", auc),
+         subtitle = "GLM model for training data")
+```
+
+The backward method returns thefinal model, which includes 12 variables including `relationship`,`education.num`,`capital.gain`,`occupation`,`capital.loss`,`hours.per.week`,`race`,`age`,`sex`,`marital.status`,`workclass`,and `native.country`.
+
+## Check Predictability
+
+```{r}
+bwd.probs = predict(bwd, test, type ="response")
+bwd.pred = rep(0, length(bwd.probs))
+bwd.pred[bwd.probs >0.5] <- 1
+table(bwd.pred, test$income)
+```
+
+```{r}
+mean(bwd.pred!= test$income)
+```
+
+For the model selected by forward selection method, the test error rate is 15.66%, which is pretty good.
+
+# Ridge Regression
+
+```{r}
+x <- model.matrix(income ~ .-fnlwgt, data = train)[,-1]
+y <- train$income
+x <- scale(x)
+grid<- 10^seq(10,-2,length=100)
+```
+```{r}
+library(glmnet)
+ridge <- glmnet(x, y, alpha = 0, lambda = grid, family = "binomial")
+plot(ridge, xvar="lambda")
+```
+
+```{r}
+cv.ridge <-cv.glmnet(x,y,alpha=0, family = "binomial")
+plot(cv.ridge)
+bestlam.ridge <- cv.ridge$lambda.min
+bestlam.ridge
+```
+```{r}
+predict(ridge, s=bestlam.ridge, type = "coefficients")
+```
+The smallest lambda is 0.021 using the cross-validation methods. 
+
+```{r}
+testx <- model.matrix(income~.-fnlwgt, data = test)
+ridge.probs = predict(ridge,  s = bestlam.ridge, newx = testx)
+ridge.pred = rep(0, length(ridge.probs))
+ridge.pred[ridge.probs >0.5] <- 1
+table(ridge.pred, test$income)
+```
+
+```{r}
+mean(ridge.pred!= test$income)
+```
+
+# lasso Regression 
+```{r}
+lasso <- glmnet(x, y, alpha = 1, lambda = grid, family = "binomial")
+plot(lasso, xvar="lambda")
+```
+
+```{r}
+cv.lasso <-cv.glmnet(x,y,alpha=1, family = "binomial")
+plot(cv.lasso)
+bestlam.lasso <- cv.lasso$lambda.min
+bestlam.lasso
+```
+The smallest lambda is 0.000235 using the cross-validation methods. 
+```{r}
+predict(lasso, s=bestlam.lasso, type = "coefficients")
+```
+
+```{r}
+testx <- model.matrix(income~.-fnlwgt, data = test)
+lasso.probs = predict(lasso,s = bestlam.ridge, newx = testx)
+lasso.pred = rep(0, length(lasso.probs))
+lasso.pred[lasso.probs >0.5] <- 1
+table(lasso.pred, test$income)
+```
+
+```{r}
+mean(lasso.pred!= test$income)
+```
+
+The models given by both lasso and ridge have a higher error rate than the model generated before. 
+
